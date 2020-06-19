@@ -32,6 +32,8 @@
  */
 
 #include <fstream>
+#include <iostream>
+#include <random>
 
 #include "lama/print.h"
 #include "lama/time.h"
@@ -114,6 +116,9 @@ lama::Slam2D::Slam2D(const Options& options)
     if (options.create_summary)
         summary = new Summary();
 
+    noise_x_ = options.noise_x;
+    noise_y_ = options.noise_y;
+    noise_yaw_ = options.noise_yaw;
 }
 
 lama::Slam2D::~Slam2D()
@@ -132,6 +137,8 @@ bool lama::Slam2D::enoughMotion(const Pose2D& odometry)
 
     if (odelta.xy().norm() <= trans_thresh_ && std::abs(odelta.rotation()) <= rot_thresh_)
         return false;
+
+    std::cout << "Enough motion: " << odelta.xy().norm() << " > " << trans_thresh_ << " or " << std::abs(odelta.rotation()) << " > " << rot_thresh_ << " for " << odelta.x() << ", " << odelta.y() << ", " << odelta.rotation() << std::endl;
 
     return true;
 }
@@ -158,12 +165,25 @@ bool lama::Slam2D::update(const PointCloudXYZ::Ptr& surface, const Pose2D& odome
 
     // 1. Predict from odometry
     Pose2D odelta = odom_ - odometry;
-    Pose2D ppose  = pose_ + odelta;
 
     // only continue if the necessary motion was gathered.
     if (odelta.xy().norm() <= trans_thresh_ &&
         std::abs(odelta.rotation()) <= rot_thresh_)
         return false;
+
+    // static std::random_device rd;
+    // static std::mt19937 generator(rd());
+    static std::mt19937 generator(0);
+
+    static std::uniform_real_distribution<> distribution_x(-noise_x_, noise_x_);
+    static std::uniform_real_distribution<> distribution_y(-noise_y_, noise_y_);
+    static std::uniform_real_distribution<> distribution_yaw(-noise_yaw_, noise_yaw_);
+
+    const Pose2D noise(distribution_x(generator), distribution_y(generator), distribution_yaw(generator));
+    std::cout << "\nNoise " << noise.x() << ", " << noise.y() << ", " << noise.rotation() << std::endl;
+
+    Pose2D ppose  = pose_ + odelta;
+    ppose += noise;
 
     pose_ = ppose;
     odom_ = odometry;
@@ -172,7 +192,14 @@ bool lama::Slam2D::update(const PointCloudXYZ::Ptr& surface, const Pose2D& odome
     Timer time_solving(true);
 
     MatchSurface2D match_surface(distance_map_, surface, pose_.state );
+    VectorXd residuals;
+    match_surface.eval(residuals, nullptr);
+    std::cout << "Score guess = " << residuals.squaredNorm() << std::endl;
+
     Solve(solver_options_, match_surface, 0);
+
+    match_surface.eval(residuals, nullptr);
+    std::cout << "Score optimization = " << residuals.squaredNorm() << std::endl;
 
     pose_.state = match_surface.getState();
     if (summary)
@@ -189,6 +216,19 @@ bool lama::Slam2D::update(const PointCloudXYZ::Ptr& surface, const Pose2D& odome
         probeStamp(timestamp);
         probeMem();
     }
+
+    Pose2D innovation = ppose - pose_;
+    std::cout << "Innovation = " << innovation.x() << ", " << innovation.y() << ", " << innovation.rotation() << std::endl;
+
+    static double max_x = 0.0;
+    static double max_y = 0.0;
+    static double max_yaw = 0.0;
+
+    max_x = std::max(max_x, std::abs(innovation.x()));
+    max_y = std::max(max_y, std::abs(innovation.y()));
+    max_yaw = std::max(max_yaw, std::abs(innovation.rotation()));
+
+    std::cout << "Max abs innovation = " << max_x << ", " << max_y << ", " << max_yaw << std::endl;
 
     return true;
 }

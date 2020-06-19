@@ -117,6 +117,9 @@ public:
         std::string calgorithm = "lz4";
         /// Save data to create an execution summary.
         bool create_summary = false;
+        double noise_x = 0.0;
+        double noise_y = 0.0;
+        double noise_yaw = 0.0;
     };
 
 
@@ -177,6 +180,10 @@ private:
 
     uint32_t number_of_proccessed_cells_;
     double truncated_ray_;
+
+    double noise_x_;
+    double noise_y_;
+    double noise_yaw_;
 };
 
 } /* lama */
